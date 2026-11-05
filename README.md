@@ -6,3 +6,4 @@
 | --------- | --------------------- | --------- |
 | H1H024044 | Chaedar Ali Amrulloh  | B         |
 | H1H024045 | Bintang Nugraha Putra | B         |
+| H1H024042 | Fachriel Yoga Wicaksono | B         |
