@@ -6,17 +6,19 @@
 #include <Adafruit_SSD1306.h>
 #include <ArduinoJson.h>
 
-constexpr int hxDout=4, hxSck=5, irPin=26, servoPin=27;
-constexpr int sdaPin=21, sclPin=22, ledGreen=10, ledYellow=11, ledRed=12, buzzerPin=33;
+// Pins ESP32-S3
+int D22;
+constexpr int irA0Pin=25, irD0Pin=26, servoPin=27; //hxDout=4, hxSck=5 
+constexpr int sdaPin=21, sclPin= 22, buzzerPin=33; //ledGreen=10, ledYellow=11, ledRed=12
 constexpr int SERVO_HZ=50, SERVO_BITS=16;
 constexpr float beratPenuh=5000.0f, batasHabis=300.0f, batasPeringatan=1000.0f;
-const char* ssid="CirkitWifi";
-const char* password="";
-const char* mqttServer="broker.hivemq.com";
+const char* ssid="wifimu";
+const char* password="wifiku";
+const char* mqttServer="192.168.43.131";
 constexpr uint16_t mqttPort=1883;
-const char* baseTopic="rumah_sakit/kamar_101/infus";
-const char* topicCommand="rumah_sakit/kamar_101/infus/setpoint";
-const char* topicData="rumah_sakit/kamar_101/infus";
+const char* baseTopic="medical/infusion/data";
+const char* topicCommand="medical/infusion/command";
+const char* topicData="medical/infusion/data/room001";
 
 WiFiClient net;
 PubSubClient mqtt(net);
@@ -33,6 +35,7 @@ uint32_t dropCount=0;
 bool previousIr=HIGH, hxAvailable=false;
 
 void setServo(int angle) {
+  // Servo is limited to a conservative mechanical range; tune only on a test rig.
   angle=constrain(angle,60,120);
   servoAngle=angle;
   const uint32_t pulseUs=500UL + (uint32_t)angle*2000UL/180UL;
@@ -43,15 +46,16 @@ void setServo(int angle) {
 
 void setAlarm(bool on) { digitalWrite(buzzerPin,on?HIGH:LOW); }
 void updateIndicators() {
+  // RGB common-cathode: GPIO12=R, GPIO11=G, GPIO10=B.
   bool alarm=(statusInfus=="HABIS"||statusInfus=="SENSOR_ERROR");
   bool warning=(statusInfus=="PERINGATAN");
-  digitalWrite(ledRed,(alarm||warning)?HIGH:LOW);
-  digitalWrite(ledYellow,(statusInfus=="AMAN"||warning)?HIGH:LOW);
-  digitalWrite(ledGreen,LOW);
+  // digitalWrite(ledRed,(alarm||warning)?HIGH:LOW);
+  // digitalWrite(ledYellow,(statusInfus=="AMAN"||warning)?HIGH:LOW);
+  // digitalWrite(ledGreen,LOW);
   setAlarm(alarm);
 }
 void updateStatus() {
-  if (!hxAvailable) statusInfus="SENSOR_ERROR";
+  if (!hxAvailable) statusInfus="SENSOR_ERROR(HX711)";
   else if (berat<=batasHabis) statusInfus="HABIS";
   else if (berat<=batasPeringatan) statusInfus="PERINGATAN";
   else statusInfus="AMAN";
@@ -74,6 +78,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (String(topic)!=topicCommand || length==0 || length>96) return;
   char msg[97]; memcpy(msg,payload,length); msg[length]='\0';
   float candidate=NAN;
+  // Accept plain numeric DPM or JSON {"setpoint": number}.
   StaticJsonDocument<96> doc;
   if (deserializeJson(doc,msg)==DeserializationError::Ok && doc.containsKey("setpoint")) candidate=doc["setpoint"].as<float>();
   else candidate=atof(msg);
@@ -85,10 +90,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
 void connectWiFi() {
   if (WiFi.status()==WL_CONNECTED) return;
-  WiFi.mode(WIFI_STA); WiFi.begin(ssid,password);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid,password);
+  Serial.print("Menghubungkan ke WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi berhasil terhubung!");
 }
 void connectMQTT() {
-  if (WiFi.status()!=WL_CONNECTED || mqtt.connected()) return;
+  if (WiFi.status()!=WL_CONNECTED) connectWiFi();
+  if (mqtt.connected()) return;
   String clientId="InfusESP32-"+String((uint32_t)ESP.getEfuseMac(),HEX);
   if (mqtt.connect(clientId.c_str())) mqtt.subscribe(topicCommand);
 }
@@ -104,13 +117,22 @@ void publishData() {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(irPin,INPUT_PULLUP);
-  pinMode(ledGreen,OUTPUT); pinMode(ledYellow,OUTPUT); pinMode(ledRed,OUTPUT); pinMode(buzzerPin,OUTPUT);
-  digitalWrite(ledRed,HIGH); setAlarm(false);
+  pinMode(irD0Pin,INPUT_PULLUP);
+  // pinMode(ledGreen,OUTPUT); pinMode(ledYellow,OUTPUT); pinMode(ledRed,OUTPUT); 
+  pinMode(buzzerPin,OUTPUT);
+  // digitalWrite(ledRed,HIGH); 
+  setAlarm(false);
   Wire.begin(sdaPin,sclPin);
   if (!display.begin(SSD1306_SWITCHCAPVCC,0x3C)) Serial.println("OLED tidak terdeteksi");
-  else { display.clearDisplay(); display.setTextColor(SSD1306_WHITE); display.setTextSize(1); display.setCursor(0,0); display.println("Monitor Infus"); display.display(); }
-  scale.begin(hxDout,hxSck); scale.set_scale(1677.72f);
+  else { 
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0,0);
+    display.println("Monitor Infus");
+    display.display(); 
+    }
+  // scale.begin(hxDout,hxSck); scale.set_scale(1677.72f);
   hxAvailable=scale.wait_ready_timeout(1500);
   if(hxAvailable) scale.tare();
   if (ledcAttach(servoPin,SERVO_HZ,SERVO_BITS)) setServo(90);
@@ -121,11 +143,11 @@ void setup() {
 }
 
 void loop() {
-  connectWiFi();
-  connectMQTT();
   if (mqtt.connected()) mqtt.loop();
+  else {connectMQTT();}
 
-  bool irNow=digitalRead(irPin);
+  // Break-beam output assumed HIGH when clear and LOW when a drop interrupts it.
+  bool irNow=digitalRead(irD0Pin);
   unsigned long now=millis();
   if (previousIr==HIGH && irNow==LOW && now-lastEdgeMs>80) {
     lastEdgeMs=now;
@@ -145,9 +167,11 @@ void loop() {
       if (!isfinite(berat)) hxAvailable=false;
       else if (berat<0) berat=0;
     }
+    // If no drop for 10 s, the measured rate is zero.
     if (lastDropMs==0 || now-lastDropMs>10000) measuredDpm=0;
     updateStatus();
 
+    // Bounded incremental PID: actuator position remains inside the configured range.
     float error=setpointDpm-measuredDpm;
     integral=constrain(integral+error*dt,-100.0f,100.0f);
     float derivative=(error-previousError)/dt;
