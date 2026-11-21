@@ -8,7 +8,8 @@
 
 // Pins ESP32-S3
 int D22;
-constexpr int irA0Pin=25, irD0Pin=26, servoPin=27; //hxDout=4, hxSck=5 
+constexpr int irA0Pin=25, irD0Pin=26, servoPin=27;
+constexpr int hxDout=4, hxSck=5;
 constexpr int sdaPin=21, sclPin= 22, buzzerPin=33; //ledGreen=10, ledYellow=11, ledRed=12
 constexpr int SERVO_HZ=50, SERVO_BITS=16;
 constexpr float beratPenuh=5000.0f, batasHabis=300.0f, batasPeringatan=1000.0f;
@@ -132,7 +133,8 @@ void setup() {
     display.println("Monitor Infus");
     display.display(); 
     }
-  // scale.begin(hxDout,hxSck); scale.set_scale(1677.72f);
+  scale.begin(hxDout,hxSck);
+  scale.set_scale(1677.72f);
   hxAvailable=scale.wait_ready_timeout(1500);
   if(hxAvailable) scale.tare();
   if (ledcAttach(servoPin,SERVO_HZ,SERVO_BITS)) setServo(90);
