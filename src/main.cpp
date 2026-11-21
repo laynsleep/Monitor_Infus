@@ -70,7 +70,8 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 float berat=0; 
 float setpointDpm=20.0f, measuredDpm=0;
 float kp=0.35f, ki=0.015f, kd=0.04f;
-float integral=0, previousError=0;
+constexpr float DPM_EMA_ALPHA=0.3f;
+float integral=0, previousMeasuredDpm=0;
 int servoAngle=90;
 unsigned long lastSample=0, lastPublish=0, lastDropMs=0, lastEdgeMs=0;
 uint32_t dropCount=0;
@@ -142,7 +143,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (isfinite(candidate) && candidate >= 1.0f && candidate <= 120.0f) {
     setpointDpm=candidate;
     integral=0;
-    previousError=0;
     mqtt.publish((String(baseTopic)+"/ack").c_str(), String(setpointDpm,1).c_str(), true);
   } else 
     mqtt.publish((String(baseTopic)+"/error").c_str(),"setpoint harus 1..120 dpm");
@@ -244,7 +244,10 @@ void loop() {
     lastEdgeMs=now;
     if (lastDropMs!=0) {
       unsigned long interval=now-lastDropMs;
-      if (interval >= 250 && interval <= 10000) measuredDpm=60000.0f/interval;
+      if (interval >= 250 && interval <= 10000) {
+        float rawDpm=60000.0f/interval;
+        measuredDpm=DPM_EMA_ALPHA*rawDpm + (1.0f-DPM_EMA_ALPHA)*measuredDpm;
+      }
     }
     lastDropMs=now;
     ++dropCount;
@@ -284,12 +287,14 @@ void loop() {
 
     // Bounded incremental PID: actuator position remains inside the configured range.
     float error=setpointDpm-measuredDpm;
-    integral=constrain(integral+error*dt,-100.0f,100.0f);
-    float derivative=(error-previousError)/dt;
-    previousError=error;
+    float derivative=(measuredDpm-previousMeasuredDpm)/dt;
+    previousMeasuredDpm=measuredDpm;
     if (hxAvailable && status != Status::Habis) {
-      float correction=kp*error+ki*integral+kd*derivative;
+      integral=constrain(integral+error*dt,-100.0f,100.0f);
+      float correction=kp*error+ki*integral-kd*derivative;
       setServo((int)constrain((float)servoAngle+correction, 60.0f, 120.0f));
+    } else {
+      integral=0.0f; 
     }
     showDisplay();
     Serial.printf("weight=%.1fg drops=%.1f/set=%.1f dpm status=%s angle=%d\n",berat, measuredDpm, setpointDpm, statusText[(int)status], servoAngle);
