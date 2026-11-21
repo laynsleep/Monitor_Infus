@@ -67,10 +67,10 @@ Adafruit_SSD1306 display(128, 64, &Wire, -1);
 /*
 * Konfigurasi PID
 */
+constexpr float DPM_EMA_ALPHA=0.3f;
 float berat=0; 
 float setpointDpm=20.0f, measuredDpm=0;
 float kp=0.35f, ki=0.015f, kd=0.04f;
-constexpr float DPM_EMA_ALPHA=0.3f;
 float integral=0, previousMeasuredDpm=0;
 int servoAngle=90;
 unsigned long lastSample=0, lastPublish=0, lastDropMs=0, lastEdgeMs=0;
@@ -113,8 +113,14 @@ void updateStatus() {
   updateIndicators(); 
 }
 
+int getPercent(float value, float hi, float lo=0.0f) {
+  float span=hi-lo;
+  if (span<=0.0f) return 0;
+  return constrain((int)((value-lo)/span*100.0f),0,100);
+}
+
 void showDisplay() {
-  int percent=constrain((int)(berat/beratPenuh*100.0f),0,100);
+  int percent=getPercent(berat, beratPenuh);
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   display.setTextSize(1);
@@ -135,8 +141,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   float candidate=NAN;
 
   // Accept plain numeric DPM or JSON {"setpoint": number}.
-  StaticJsonDocument<96> doc;
-  if (deserializeJson(doc,msg) == DeserializationError::Ok && doc.containsKey("setpoint")) 
+  JsonDocument doc;
+  if (deserializeJson(doc,msg) == DeserializationError::Ok && doc["setpoint"].is<float>()) 
     candidate=doc["setpoint"].as<float>();
   else 
     candidate=atof(msg);
@@ -168,10 +174,10 @@ void connectMQTT() {
 
 void publishData() {
   if (!mqtt.connected()) return;
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
 
   doc["weight_g"]=berat;
-  doc["percent"]=constrain((int)(berat/beratPenuh*100),0,100);
+  doc["percent"]=getPercent(berat, beratPenuh);
   doc["drops_per_minute"]=measuredDpm;
   doc["setpoint_dpm"]=setpointDpm;
   doc["servo_angle_deg"]=servoAngle;
