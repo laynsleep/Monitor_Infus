@@ -6,6 +6,17 @@
 #include <Adafruit_SSD1306.h>
 #include <ArduinoJson.h>
 
+/*
+* Environment
+*/
+const char* ssid="wifimu";
+const char* password="wifiku";
+const char* mqttServer="192.168.43.131";
+constexpr uint16_t mqttPort=1883;
+const char* baseTopic="medical/infusion/data";
+const char* topicCommand="medical/infusion/command";
+const char* topicData="medical/infusion/data/room001";
+
 /*  
 * Initialise Variable
 */
@@ -28,20 +39,19 @@ constexpr uint32_t HX_INIT_TIMEOUT_MS=1500;
 constexpr uint32_t HX_READ_TIMEOUT_MS=100;
 constexpr float HX_TARE_MAX_G=50.0f;  // auto-tare hanya jika beban masih dekat nol
 constexpr float HX_SCALE=1677.72f;
-constexpr float beratPenuh=5000.0f, batasHabis=300.0f, batasPeringatan=1000.0f;
-const char* ssid="wifimu";
-const char* password="wifiku";
-const char* mqttServer="192.168.43.131";
-constexpr uint16_t mqttPort=1883;
-const char* baseTopic="medical/infusion/data";
-const char* topicCommand="medical/infusion/command";
-const char* topicData="medical/infusion/data/room001";
-
-/* STATUS */
+constexpr uint32_t WIFI_RETRY_MS=5000;
 enum class Status : uint8_t { Starting, Aman, Peringatan, Habis, SensorError, ServoError };
 static const char* const statusText[] = {
   "STARTING", "AMAN", "PERINGATAN", "HABIS", "SENSOR_ERROR", "SERVO_ERROR"
 };
+
+/* STATE */ 
+float beratPenuh=5000.0f, batasHabis=300.0f, batasPeringatan=1000.0f;
+unsigned long lastWiFiAttempt=0;
+Status status=Status::Starting;
+uint8_t hxFailCount=0;
+bool hxNeedTare=false, hxAvailable=false;
+bool previousIr=HIGH;
 
 /* 
 * Initialise Object
@@ -59,12 +69,8 @@ float setpointDpm=20.0f, measuredDpm=0;
 float kp=0.35f, ki=0.015f, kd=0.04f;
 float integral=0, previousError=0;
 int servoAngle=90;
-Status status=Status::Starting;
 unsigned long lastSample=0, lastPublish=0, lastDropMs=0, lastEdgeMs=0;
 uint32_t dropCount=0;
-bool previousIr=HIGH, hxAvailable=false;
-uint8_t hxFailCount=0;
-bool hxNeedTare=false;
 
 void setServo(int angle) {
   // Servo is limited to a conservative mechanical range; tune only on a test rig.
@@ -140,19 +146,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void connectWiFi() {
-  if (WiFi.status()==WL_CONNECTED) return;
+  if (WiFi.status() == WL_CONNECTED) return;
+  if (millis()-lastWiFiAttempt < WIFI_RETRY_MS && lastWiFiAttempt) return;
+  Serial.println("WiFi: menghubungkan...");
+  lastWiFiAttempt=millis();
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid,password);
-  Serial.print("Menghubungkan ke WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nWiFi berhasil terhubung!");
 }
 
 void connectMQTT() {
-  if (WiFi.status() != WL_CONNECTED) connectWiFi();
+  if (WiFi.status() != WL_CONNECTED) return;
   if (mqtt.connected()) return;
   String clientId="InfusESP32-" + String((uint32_t)ESP.getEfuseMac(), HEX);
   if (mqtt.connect(clientId.c_str())) mqtt.subscribe(topicCommand);
@@ -218,6 +221,7 @@ void setup() {
 }
 
 void loop() {
+  connectWiFi();
   if (mqtt.connected())
     mqtt.loop();
   else
