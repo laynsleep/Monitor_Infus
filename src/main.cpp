@@ -219,6 +219,8 @@ void setup() {
     Serial.println("PWM servo gagal diinisialisasi");
   }
 
+  net.setTimeout(2000);
+  mqtt.setSocketTimeout(2);
   mqtt.setServer(mqttServer,mqttPort);
   mqtt.setCallback(mqttCallback);
   mqtt.setBufferSize(256);
