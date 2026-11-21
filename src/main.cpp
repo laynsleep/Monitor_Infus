@@ -16,8 +16,8 @@ constexpr int irA0Pin=25, irD0Pin=26; // Octocoupler
 constexpr int hxDout=4, hxSck=5;      // HX711 + Load Balancer
 
 /* AKTUATOR */
-constexpr int servoPin=27;            // Servo
-constexpr int buzzerPin=33;           // Buzzer
+constexpr int servoPin=33;            // Servo
+constexpr int buzzerPin=13;           // Buzzer
 // constexpr int ledGreen=10, ledYellow=11, ledRed=12
 constexpr int sdaPin=21, sclPin= 22;  // LCD
 
@@ -26,6 +26,8 @@ constexpr int SERVO_HZ=50, SERVO_BITS=16;
 constexpr uint8_t HX_MAX_FAILS=3;
 constexpr uint32_t HX_INIT_TIMEOUT_MS=1500;
 constexpr uint32_t HX_READ_TIMEOUT_MS=100;
+constexpr float HX_TARE_MAX_G=50.0f;  // auto-tare hanya jika beban masih dekat nol
+constexpr float HX_SCALE=1677.72f;
 constexpr float beratPenuh=5000.0f, batasHabis=300.0f, batasPeringatan=1000.0f;
 const char* ssid="wifimu";
 const char* password="wifiku";
@@ -34,8 +36,6 @@ constexpr uint16_t mqttPort=1883;
 const char* baseTopic="medical/infusion/data";
 const char* topicCommand="medical/infusion/command";
 const char* topicData="medical/infusion/data/room001";
-bool previousIr=HIGH, hxAvailable=false;
-uint8_t hxFailCount=0;
 
 /* 
 * Initialise Object
@@ -56,6 +56,9 @@ int servoAngle=90;
 String statusInfus="STARTING";
 unsigned long lastSample=0, lastPublish=0, lastDropMs=0, lastEdgeMs=0;
 uint32_t dropCount=0;
+bool previousIr=HIGH, hxAvailable=false;
+uint8_t hxFailCount=0;
+bool hxNeedTare=false;
 
 void setServo(int angle) {
   // Servo is limited to a conservative mechanical range; tune only on a test rig.
@@ -184,10 +187,11 @@ void setup() {
     display.display(); 
     }
 
-  scale.begin(hxDout,hxSck);
-  scale.set_scale(1677.72f);
+  scale.begin(hxDout, hxSck);
+  scale.set_scale(HX_SCALE);
   hxAvailable=scale.wait_ready_timeout(HX_INIT_TIMEOUT_MS);
   hxFailCount=hxAvailable ? 0 : HX_MAX_FAILS;
+  hxNeedTare=!hxAvailable;
   if (hxAvailable) 
     scale.tare();
   if (ledcAttach(servoPin,SERVO_HZ,SERVO_BITS))
@@ -232,7 +236,16 @@ void loop() {
     if (hxReadOk) {
       float raw=scale.get_units(3);
       hxReadOk=isfinite(raw);
-      if (hxReadOk) berat=(raw<0) ? 0 : raw;
+      if (hxReadOk) {
+        if (hxNeedTare && raw >= -HX_TARE_MAX_G && raw<=HX_TARE_MAX_G) {
+          scale.tare();
+          hxNeedTare=false;
+          berat=0;
+          Serial.println("HX711: tare otomatis dilakukan");
+        } else {
+          berat=(raw<0) ? 0 : raw;
+        }
+      }
     }
     
     if (hxReadOk)
