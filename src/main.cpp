@@ -21,8 +21,11 @@ constexpr int buzzerPin=33;           // Buzzer
 // constexpr int ledGreen=10, ledYellow=11, ledRed=12
 constexpr int sdaPin=21, sclPin= 22;  // LCD
 
-/* UTILIY */
+/* KONFIGURASI */
 constexpr int SERVO_HZ=50, SERVO_BITS=16;
+constexpr uint8_t HX_MAX_FAILS=3;
+constexpr uint32_t HX_INIT_TIMEOUT_MS=1500;
+constexpr uint32_t HX_READ_TIMEOUT_MS=100;
 constexpr float beratPenuh=5000.0f, batasHabis=300.0f, batasPeringatan=1000.0f;
 const char* ssid="wifimu";
 const char* password="wifiku";
@@ -31,6 +34,8 @@ constexpr uint16_t mqttPort=1883;
 const char* baseTopic="medical/infusion/data";
 const char* topicCommand="medical/infusion/command";
 const char* topicData="medical/infusion/data/room001";
+bool previousIr=HIGH, hxAvailable=false;
+uint8_t hxFailCount=0;
 
 /* 
 * Initialise Object
@@ -51,7 +56,6 @@ int servoAngle=90;
 String statusInfus="STARTING";
 unsigned long lastSample=0, lastPublish=0, lastDropMs=0, lastEdgeMs=0;
 uint32_t dropCount=0;
-bool previousIr=HIGH, hxAvailable=false;
 
 void setServo(int angle) {
   // Servo is limited to a conservative mechanical range; tune only on a test rig.
@@ -107,8 +111,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   if (String(topic) != topicCommand || length == 0 || length > 96) return;
   
   char msg[97];
-  char memcpy(msg,payload,length);
-  char msg[length]='\0';
+  memcpy(msg,payload,length);
+  msg[length]='\0';
   float candidate=NAN;
 
   // Accept plain numeric DPM or JSON {"setpoint": number}.
@@ -182,7 +186,8 @@ void setup() {
 
   scale.begin(hxDout,hxSck);
   scale.set_scale(1677.72f);
-  hxAvailable=scale.wait_ready_timeout(1500);
+  hxAvailable=scale.wait_ready_timeout(HX_INIT_TIMEOUT_MS);
+  hxFailCount=hxAvailable ? 0 : HX_MAX_FAILS;
   if (hxAvailable) 
     scale.tare();
   if (ledcAttach(servoPin,SERVO_HZ,SERVO_BITS))
@@ -221,16 +226,20 @@ void loop() {
 
   if (now-lastSample >= 1000) {
     float dt=(now-lastSample)/1000.0f; 
-    float lastSample=now;
+    lastSample=now;
 
-    hxAvailable=scale.is_ready();
-    if (hxAvailable) {
-      berat=scale.get_units(3);
-      if (!isfinite(berat))
-        hxAvailable=false;
-      else if (berat<0)
-        berat=0;
+    bool hxReadOk=scale.wait_ready_timeout(HX_READ_TIMEOUT_MS);
+    if (hxReadOk) {
+      float raw=scale.get_units(3);
+      hxReadOk=isfinite(raw);
+      if (hxReadOk) berat=(raw<0) ? 0 : raw;
     }
+    
+    if (hxReadOk)
+      hxFailCount=0;
+    else if (hxFailCount < HX_MAX_FAILS)
+      ++hxFailCount;
+    hxAvailable=(hxFailCount < HX_MAX_FAILS);
 
     // If no drop for 10 s, the measured rate is zero.
     if (lastDropMs==0 || now-lastDropMs>10000)
