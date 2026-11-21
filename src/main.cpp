@@ -39,7 +39,8 @@ constexpr uint32_t HX_INIT_TIMEOUT_MS=1500;
 constexpr uint32_t HX_READ_TIMEOUT_MS=100;
 constexpr float HX_TARE_MAX_G=50.0f;  // auto-tare hanya jika beban masih dekat nol
 constexpr float HX_SCALE=1677.72f;
-constexpr uint32_t WIFI_RETRY_MS=5000;
+constexpr uint32_t WIFI_RETRY_MS=2500;
+constexpr uint32_t WIFI_RETRY_MAX_MS=40000;
 enum class Status : uint8_t { Starting, Aman, Peringatan, Habis, SensorError, ServoError };
 static const char* const statusText[] = {
   "STARTING", "AMAN", "PERINGATAN", "HABIS", "SENSOR_ERROR", "SERVO_ERROR"
@@ -49,6 +50,7 @@ static const char* const statusText[] = {
 float beratPenuh=5000.0f, batasHabis=300.0f, batasPeringatan=1000.0f;
 unsigned long lastWiFiAttempt=0;
 Status status=Status::Starting;
+uint32_t wifiRetryMs=WIFI_RETRY_MS;
 uint8_t hxFailCount=0;
 bool hxNeedTare=false, hxAvailable=false;
 bool previousIr=HIGH;
@@ -146,11 +148,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 }
 
 void connectWiFi() {
-  if (WiFi.status() == WL_CONNECTED) return;
-  if (millis()-lastWiFiAttempt < WIFI_RETRY_MS && lastWiFiAttempt) return;
-  Serial.println("WiFi: menghubungkan...");
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiRetryMs=WIFI_RETRY_MS;
+    return;
+  }
+  if (millis()-lastWiFiAttempt < wifiRetryMs && lastWiFiAttempt) return;
+  wifiRetryMs=min(wifiRetryMs*2, WIFI_RETRY_MAX_MS);
   lastWiFiAttempt=millis();
-  WiFi.mode(WIFI_STA);
   WiFi.begin(ssid,password);
 }
 
@@ -216,6 +220,8 @@ void setup() {
   mqtt.setServer(mqttServer,mqttPort);
   mqtt.setCallback(mqttCallback);
   mqtt.setBufferSize(256);
+  WiFi.mode(WIFI_STA);
+  Serial.println("WiFi: menghubungkan...");
   connectWiFi();
   lastSample=millis();
 }
