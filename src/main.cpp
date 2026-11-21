@@ -34,6 +34,7 @@ constexpr int sdaPin=21, sclPin= 22;  // LCD
 
 /* KONFIGURASI */
 constexpr int SERVO_HZ=50, SERVO_BITS=16;
+constexpr uint8_t SERVO_CH=0;
 constexpr uint8_t HX_MAX_FAILS=3;
 constexpr uint32_t HX_INIT_TIMEOUT_MS=1500;
 constexpr uint32_t HX_READ_TIMEOUT_MS=100;
@@ -81,7 +82,7 @@ void setServo(int angle) {
   const uint32_t pulseUs=500UL + (uint32_t)angle*2000UL/180UL;
   const uint32_t periodUs=1000000UL/SERVO_HZ;
   const uint32_t maxDuty=(1UL<<SERVO_BITS)-1;
-  ledcWrite(servoPin, (uint32_t)((uint64_t)pulseUs*maxDuty/periodUs));
+  ledcWrite(SERVO_CH, (uint32_t)((uint64_t)pulseUs*maxDuty/periodUs));
 }
 
 /*  Aktifkan buzzer berdasarkan nilai alarm
@@ -210,11 +211,12 @@ void setup() {
   hxNeedTare=!hxAvailable;
   if (hxAvailable) 
     scale.tare();
-  if (ledcAttach(servoPin,SERVO_HZ,SERVO_BITS))
+  if (ledcSetup(SERVO_CH, SERVO_HZ, SERVO_BITS) > 0) {
+    ledcAttachPin(servoPin, SERVO_CH);
     setServo(90);
-  else { 
+  } else {
     status=Status::ServoError;
-    Serial.println("PWM servo gagal diinisialisasi"); 
+    Serial.println("PWM servo gagal diinisialisasi");
   }
 
   mqtt.setServer(mqttServer,mqttPort);
