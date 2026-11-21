@@ -37,6 +37,12 @@ const char* baseTopic="medical/infusion/data";
 const char* topicCommand="medical/infusion/command";
 const char* topicData="medical/infusion/data/room001";
 
+/* STATUS */
+enum class Status : uint8_t { Starting, Aman, Peringatan, Habis, SensorError, ServoError };
+static const char* const statusText[] = {
+  "STARTING", "AMAN", "PERINGATAN", "HABIS", "SENSOR_ERROR", "SERVO_ERROR"
+};
+
 /* 
 * Initialise Object
 */
@@ -53,7 +59,7 @@ float setpointDpm=20.0f, measuredDpm=0;
 float kp=0.35f, ki=0.015f, kd=0.04f;
 float integral=0, previousError=0;
 int servoAngle=90;
-String statusInfus="STARTING";
+Status status=Status::Starting;
 unsigned long lastSample=0, lastPublish=0, lastDropMs=0, lastEdgeMs=0;
 uint32_t dropCount=0;
 bool previousIr=HIGH, hxAvailable=false;
@@ -77,23 +83,23 @@ void setServo(int angle) {
 void setAlarm(bool on) { digitalWrite(buzzerPin, on ? HIGH : LOW); }
 void updateIndicators() {
   // RGB common-cathode: GPIO12=R, GPIO11=G, GPIO10=B.
-  bool alarm=(statusInfus=="HABIS" || statusInfus=="SENSOR_ERROR");
-  bool warning=(statusInfus=="PERINGATAN");
+  bool alarm=(status==Status::Habis || status==Status::SensorError);
+  bool warning=(status==Status::Peringatan);
   // digitalWrite(ledRed,(alarm||warning)?HIGH:LOW);
-  // digitalWrite(ledYellow,(statusInfus=="AMAN"||warning)?HIGH:LOW);
+  // digitalWrite(ledYellow,(status==Status::Aman||warning)?HIGH:LOW);
   // digitalWrite(ledGreen,LOW);
   setAlarm(alarm);
 }
 
 /*  Mengubah status berdasarkan berat infus
-*   mengembalikan status "SENSOR_ERROR(HX711)" apabila HX711 tidak terbaca
-*   mengembalikan status "HABIS" atau "PERINGATAN" tergantung berat
+*   Status::SensorError apabila HX711 tidak terbaca
+*   Status::Habis atau Status::Peringatan tergantung berat
 */
 void updateStatus() {
-  statusInfus="AMAN";
-  if (!hxAvailable) statusInfus="SENSOR_ERROR(HX711)";
-  else if (berat<=batasHabis) statusInfus="HABIS";
-  else if (berat<=batasPeringatan) statusInfus="PERINGATAN";
+  status=Status::Aman;
+  if (!hxAvailable) status=Status::SensorError;
+  else if (berat<=batasHabis) status=Status::Habis;
+  else if (berat<=batasPeringatan) status=Status::Peringatan;
   updateIndicators(); 
 }
 
@@ -106,7 +112,7 @@ void showDisplay() {
   display.setCursor(0,14); display.print("Berat: "); display.print(berat,0); display.println(" g");
   display.setCursor(0,27); display.print("Tetes: "); display.print(measuredDpm,1); display.println(" dpm");
   display.setCursor(0,40); display.print("Target: "); display.print(setpointDpm,1); display.println(" dpm");
-  display.setCursor(0,53); display.print(statusInfus); display.print(" "); display.print(percent); display.println("%");
+  display.setCursor(0,53); display.print(statusText[(int)status]); display.print(" "); display.print(percent); display.println("%");
   display.display();
 }
 
@@ -156,9 +162,12 @@ void publishData() {
   if (!mqtt.connected()) return;
   StaticJsonDocument<256> doc;
 
-  doc["weight_g"]=berat; doc["percent"]=constrain((int)(berat/beratPenuh*100),0,100);
-  doc["drops_per_minute"]=measuredDpm; doc["setpoint_dpm"]=setpointDpm;
-  doc["servo_angle_deg"]=servoAngle; doc["status"]=statusInfus;
+  doc["weight_g"]=berat;
+  doc["percent"]=constrain((int)(berat/beratPenuh*100),0,100);
+  doc["drops_per_minute"]=measuredDpm;
+  doc["setpoint_dpm"]=setpointDpm;
+  doc["servo_angle_deg"]=servoAngle;
+  doc["status"]=statusText[(int)status];
 
   char payload[256];
   size_t n=serializeJson(doc, payload,sizeof(payload));
@@ -197,7 +206,7 @@ void setup() {
   if (ledcAttach(servoPin,SERVO_HZ,SERVO_BITS))
     setServo(90);
   else { 
-    statusInfus="SERVO_ERROR";
+    status=Status::ServoError;
     Serial.println("PWM servo gagal diinisialisasi"); 
   }
 
@@ -264,12 +273,12 @@ void loop() {
     integral=constrain(integral+error*dt,-100.0f,100.0f);
     float derivative=(error-previousError)/dt;
     previousError=error;
-    if (hxAvailable && statusInfus != "HABIS") {
+    if (hxAvailable && status != Status::Habis) {
       float correction=kp*error+ki*integral+kd*derivative;
       setServo((int)constrain((float)servoAngle+correction, 60.0f, 120.0f));
     }
     showDisplay();
-    Serial.printf("weight=%.1fg drops=%.1f/set=%.1f dpm status=%s angle=%d\n",berat, measuredDpm, setpointDpm, statusInfus.c_str(), servoAngle);
+    Serial.printf("weight=%.1fg drops=%.1f/set=%.1f dpm status=%s angle=%d\n",berat, measuredDpm, setpointDpm, statusText[(int)status], servoAngle);
   }
   if (now-lastPublish>=2000) { 
     lastPublish=now;
