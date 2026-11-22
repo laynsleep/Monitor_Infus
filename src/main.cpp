@@ -16,6 +16,8 @@ constexpr uint16_t mqttPort=1883;
 const char* baseTopic="medical/infusion/data";
 const char* topicCommand="medical/infusion/command";
 const char* topicData="medical/infusion/data/room001";
+const char* topicAck="medical/infusion/data/ack";
+const char* topicError="medical/infusion/data/error";
 
 /*  
 * Initialise Variable
@@ -55,6 +57,7 @@ uint8_t hxFailCount=0;
 bool hxNeedTare=false, hxAvailable=false;
 bool previousIr=HIGH;
 bool oledAvailable=false;
+char deviceId[23];  // UID unik dari MAC 64-bit
 
 /* 
 * Initialise Object
@@ -136,26 +139,42 @@ void showDisplay() {
   display.display();
 }
 
+void publishCommandError(const char* reason) {
+  char body[96];
+  snprintf(body,sizeof(body),"{\"id\":\"%s\",\"error\":\"%s\"}",deviceId,reason);
+  mqtt.publish(topicError,body);
+}
+
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  if (String(topic) != topicCommand || length == 0 || length > 96) return;
-  
+  if (strcmp(topic,topicCommand)!=0 || length==0 || length>96) return;
+
   char msg[97];
   memcpy(msg,payload,length);
   msg[length]='\0';
-  float candidate=NAN;
 
-  // Accept plain numeric DPM or JSON {"setpoint": number}.
   JsonDocument doc;
-  if (deserializeJson(doc,msg) == DeserializationError::Ok && doc["setpoint"].is<float>()) 
-    candidate=doc["setpoint"].as<float>();
-  else 
-    candidate=atof(msg);
-  if (isfinite(candidate) && candidate >= 1.0f && candidate <= 120.0f) {
+  if (deserializeJson(doc,msg)!=DeserializationError::Ok) {
+    publishCommandError("format JSON tidak valid");
+    return;
+  }
+  if (!doc["id"].is<const char*>()) return;
+  const char* id=doc["id"].as<const char*>();
+  if (strcmp(id,deviceId)!=0) return;
+
+  if (!doc["setpoint"].is<float>()) {
+    publishCommandError("setpoint harus angka");
+    return;
+  }
+  float candidate=doc["setpoint"].as<float>();
+  if (isfinite(candidate) && candidate>=1.0f && candidate<=120.0f) {
     setpointDpm=candidate;
     integral=0;
-    mqtt.publish((String(baseTopic)+"/ack").c_str(), String(setpointDpm,1).c_str(), true);
-  } else 
-    mqtt.publish((String(baseTopic)+"/error").c_str(),"setpoint harus 1..120 dpm");
+    char ack[96];
+    snprintf(ack,sizeof(ack),"{\"id\":\"%s\",\"setpoint\":%.1f}",deviceId,setpointDpm);
+    mqtt.publish(topicAck,ack,true);
+  } else {
+    publishCommandError("setpoint harus 1..120 dpm");
+  }
 }
 
 void connectWiFi() {
@@ -172,14 +191,14 @@ void connectWiFi() {
 void connectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (mqtt.connected()) return;
-  String clientId="InfusESP32-" + String((uint32_t)ESP.getEfuseMac(), HEX);
-  if (mqtt.connect(clientId.c_str())) mqtt.subscribe(topicCommand);
+  if (mqtt.connect(deviceId)) mqtt.subscribe(topicCommand);
 }
 
 void publishData() {
   if (!mqtt.connected()) return;
   JsonDocument doc;
 
+  doc["device_id"]=deviceId;
   doc["weight_g"]=berat;
   doc["percent"]=getPercent(berat, beratPenuh);
   doc["drops_per_minute"]=measuredDpm;
@@ -194,6 +213,7 @@ void publishData() {
 
 void setup() {
   Serial.begin(115200);
+  snprintf(deviceId,sizeof(deviceId),"ESP32-%016llX",(unsigned long long)ESP.getEfuseMac());
 
   pinMode(irD0Pin,INPUT_PULLUP);
   // pinMode(ledGreen,OUTPUT); pinMode(ledYellow,OUTPUT); pinMode(ledRed,OUTPUT); 
