@@ -191,7 +191,11 @@ void connectWiFi() {
 void connectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
   if (mqtt.connected()) return;
-  if (mqtt.connect(deviceId)) mqtt.subscribe(topicCommand);
+  if (mqtt.connect(deviceId)) {
+    mqtt.subscribe(topicCommand);
+    Serial.print("MQTT Terkoneksi: ");
+    Serial.println(deviceId);
+  }
 }
 
 void publishData() {
@@ -208,7 +212,11 @@ void publishData() {
 
   char payload[256];
   size_t n=serializeJson(doc, payload,sizeof(payload));
-  if (n) mqtt.publish(topicData,payload);
+  if (n) {
+    mqtt.publish(topicData, payload);
+    Serial.print("Data dikirim ke topic ");
+    Serial.println(topicData);
+  }
 }
 
 void setup() {
