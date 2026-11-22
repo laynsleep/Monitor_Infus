@@ -20,10 +20,9 @@ const char* topicData="medical/infusion/data/room001";
 /*  
 * Initialise Variable
 */
-int D22;
 
 /* SENSOR */
-constexpr int irA0Pin=25, irD0Pin=26; // Octocoupler
+constexpr int irD0Pin=26; // Octocoupler
 constexpr int hxDout=4, hxSck=5;      // HX711 + Load Balancer
 
 /* AKTUATOR */
@@ -55,6 +54,7 @@ uint32_t wifiRetryMs=WIFI_RETRY_MS;
 uint8_t hxFailCount=0;
 bool hxNeedTare=false, hxAvailable=false;
 bool previousIr=HIGH;
+bool oledAvailable=false;
 
 /* 
 * Initialise Object
@@ -74,7 +74,10 @@ float kp=0.35f, ki=0.015f, kd=0.04f;
 float integral=0, previousMeasuredDpm=0;
 int servoAngle=90;
 unsigned long lastSample=0, lastPublish=0, lastDropMs=0, lastEdgeMs=0;
-uint32_t dropCount=0;
+
+/* UNUSED */
+// constexpr int irA0Pin=25;
+// uint32_t dropCount=0;
 
 void setServo(int angle) {
   // Servo is limited to a conservative mechanical range; tune only on a test rig.
@@ -120,6 +123,7 @@ int getPercent(float value, float hi, float lo=0.0f) {
 }
 
 void showDisplay() {
+  if (!oledAvailable) return;
   int percent=getPercent(berat, beratPenuh);
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
@@ -202,6 +206,7 @@ void setup() {
   if (!display.begin(SSD1306_SWITCHCAPVCC,0x3C))
     Serial.println("OLED tidak terdeteksi");
   else { 
+    oledAvailable=true;
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
@@ -256,7 +261,7 @@ void loop() {
       }
     }
     lastDropMs=now;
-    ++dropCount;
+    // ++dropCount;
   }
   previousIr=irNow;
 
